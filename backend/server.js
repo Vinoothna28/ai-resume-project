@@ -1,8 +1,6 @@
-const fs = require("fs");
 const { PDFParse } = require("pdf-parse");
 const Resume = require("./models/Resume");
 const multer = require("multer");
-const path = require("path");
 const express = require("express");
 const cors = require("cors");
 const mongoose = require("mongoose");
@@ -31,17 +29,11 @@ app.get("/", (req, res) => {
     res.send("Backend is working!");
 });
 
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        cb(null, "uploads/");
-    },
+const storage = multer.memoryStorage();
 
-    filename: (req, file, cb) => {
-        cb(null, Date.now() + path.extname(file.originalname));
-    }
+const upload = multer({
+    storage: storage
 });
-
-const upload = multer({ storage: storage });
 
 app.post("/api/resumes", async (req, res) => {
 
@@ -55,8 +47,12 @@ app.post("/api/resumes", async (req, res) => {
 
     } catch (error) {
 
+        console.log("SAVE RESUME ERROR:");
+        console.log(error);
+
         res.status(500).json({
-            message: "Failed to save resume"
+            message: "Failed to save resume",
+            error: error.message
         });
     }
 });
@@ -130,6 +126,8 @@ async function createResumeEmbeddings(resume) {
 
 app.post("/api/upload", upload.single("resume"), async (req, res) => {
 
+    let parser = null;
+
     try {
 
         if (!req.file) {
@@ -138,10 +136,14 @@ app.post("/api/upload", upload.single("resume"), async (req, res) => {
             });
         }
 
-        const fileBuffer = fs.readFileSync(req.file.path);
+        console.log("PDF received:");
+        console.log(req.file.originalname);
+
+        console.log("PDF size:");
+        console.log(req.file.size);
 
         const parser = new PDFParse({
-            data: fileBuffer
+            data: req.file.buffer
         });
 
         const pdfData = await parser.getText();
@@ -149,6 +151,14 @@ app.post("/api/upload", upload.single("resume"), async (req, res) => {
         const resumeText = pdfData.text;
 
         await parser.destroy();
+
+        if (!resumeText || !resumeText.trim()) {
+            return res.status(400).json({
+                message: "Could not extract text from the PDF"
+            });
+        }
+
+        console.log("PDF text extracted successfully");
 
         const resume = new Resume({
             resumeText: resumeText
@@ -161,14 +171,17 @@ app.post("/api/upload", upload.single("resume"), async (req, res) => {
             savedResume._id
         );
 
-        console.log("Starting automatic RAG embedding...");
+        console.log(
+            "Starting automatic RAG embedding..."
+        );
 
         const chunkCount = await createResumeEmbeddings(
             savedResume
         );
 
         res.json({
-            message: "Resume uploaded and RAG embeddings created successfully",
+            message:
+                "Resume uploaded and RAG embeddings created successfully",
             resumeId: savedResume._id,
             chunkCount: chunkCount
         });
@@ -178,8 +191,18 @@ app.post("/api/upload", upload.single("resume"), async (req, res) => {
         console.log("UPLOAD ERROR:");
         console.log(error);
 
+        if (parser) {
+            try {
+                await parser.destroy();
+            } catch (destroyError) {
+                console.log("Parser cleanup error:");
+                console.log(destroyError);
+            }
+        }
+
         res.status(500).json({
-            message: "Resume upload or embedding failed",
+            message:
+                "Resume upload or embedding failed",
             error: error.message
         });
     }
@@ -231,7 +254,8 @@ app.post("/api/embed/:id", async (req, res) => {
         );
 
         res.json({
-            message: "Resume embeddings created successfully",
+            message:
+                "Resume embeddings created successfully",
             chunkCount: chunkCount
         });
 
@@ -241,7 +265,8 @@ app.post("/api/embed/:id", async (req, res) => {
         console.log(error);
 
         res.status(500).json({
-            message: "Failed to create resume embeddings",
+            message:
+                "Failed to create resume embeddings",
             error: error.message
         });
     }
@@ -269,7 +294,8 @@ app.post("/api/chat/:id", async (req, res) => {
 
         if (!resume.chunks || resume.chunks.length === 0) {
             return res.status(400).json({
-                message: "Resume embeddings not created yet"
+                message:
+                    "Resume embeddings not created yet"
             });
         }
 
@@ -308,7 +334,15 @@ app.post("/api/chat/:id", async (req, res) => {
             .join("\n\n");
 
         const prompt = `
-You are an AI assistant that answers questions about a user's resume.
+You are ResumeAI, a professional career assistant built into a portfolio platform.
+
+A user is asking a question about their professional background.
+
+Answer naturally, warmly, and professionally, writing in the first-person style appropriate for discussing the user's resume.
+
+Seamlessly weave the technical skills and experiences from the provided context into conversational paragraphs or clean, easily readable bullet points.
+
+Avoid raw JSON, markdown bolded list spam, or robotic prefixes.
 
 Answer the user's question using ONLY the resume context provided below.
 
@@ -318,7 +352,7 @@ If the answer cannot be found in the resume context, say:
 
 Do not invent information.
 
-Keep the answer clear and useful.
+Keep the answer clear, useful, encouraging, and professional.
 
 Resume Context:
 ${context}
@@ -333,7 +367,8 @@ ${question}
         });
 
         res.json({
-            message: "Answer generated successfully",
+            message:
+                "Answer generated successfully",
             answer: response.text
         });
 
@@ -343,7 +378,8 @@ ${question}
         console.log(error);
 
         res.status(500).json({
-            message: "Failed to generate answer",
+            message:
+                "Failed to generate answer",
             error: error.message
         });
     }
@@ -355,7 +391,8 @@ app.get("/api/test-ai", async (req, res) => {
 
         const response = await ai.models.generateContent({
             model: "gemini-3.6-flash",
-            contents: "Say hello and tell me you are working."
+            contents:
+                "Say hello and tell me you are working."
         });
 
         res.json({
@@ -368,7 +405,8 @@ app.get("/api/test-ai", async (req, res) => {
         console.log(error);
 
         res.status(500).json({
-            message: "Gemini API failed",
+            message:
+                "Gemini API failed",
             error: error.message
         });
     }
@@ -435,7 +473,8 @@ ${resume.resumeText}
         await resume.save();
 
         res.json({
-            message: "Resume analyzed successfully",
+            message:
+                "Resume analyzed successfully",
             analysis: analysis
         });
 
@@ -445,7 +484,8 @@ ${resume.resumeText}
         console.log(error);
 
         res.status(500).json({
-            message: "Resume analysis failed",
+            message:
+                "Resume analysis failed",
             error: error.message
         });
     }
@@ -467,7 +507,8 @@ app.post("/api/match/:id", async (req, res) => {
 
         if (!jobDescription) {
             return res.status(400).json({
-                message: "Job description is required"
+                message:
+                    "Job description is required"
             });
         }
 
@@ -510,7 +551,8 @@ ${jobDescription}
         const matchResult = JSON.parse(cleanText);
 
         res.json({
-            message: "Resume matched successfully",
+            message:
+                "Resume matched successfully",
             result: matchResult
         });
 
@@ -520,7 +562,8 @@ ${jobDescription}
         console.log(error);
 
         res.status(500).json({
-            message: "Resume matching failed",
+            message:
+                "Resume matching failed",
             error: error.message
         });
     }
@@ -545,7 +588,8 @@ app.post("/api/preparation/:id", async (req, res) => {
 
         if (!jobDescription) {
             return res.status(400).json({
-                message: "Job description is required"
+                message:
+                    "Job description is required"
             });
         }
 
