@@ -3,7 +3,7 @@ import { useState } from "react";
 import { motion, AnimatePresence } from "motion/react";
 import "./App.css";
 
-const API_URL = "http://localhost:5000";
+const API_URL = "https://ai-resume-backend-d4ko.onrender.com";
 
 function App() {
     const [activeSection, setActiveSection] = useState("dashboard");
